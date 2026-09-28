@@ -3,6 +3,11 @@ name: Build DXVK Mali (.wcp)
 # Só roda quando você tocar em "Run workflow" na aba Actions
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch ou tag para compilar (ex: master, mali-1.10)"
+        required: true
+        default: "master"
 
 permissions:
   contents: write   # necessário para publicar o .wcp em Releases
@@ -17,6 +22,7 @@ jobs:
       - name: Baixar código (com submódulos)
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.ref }}
           submodules: recursive
 
       - name: Instalar dependências
@@ -28,6 +34,14 @@ jobs:
             sudo update-alternatives --set ${arch}-w64-mingw32-g++ /usr/bin/${arch}-w64-mingw32-g++-posix
           done
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Aplicar patches Mali
+        run: |
+          if [ -f scripts/mali_patch.py ]; then
+            python3 scripts/mali_patch.py
+          else
+            echo "Sem scripts/mali_patch.py: compilando sem patches"
+          fi
 
       - name: Compilar (x32 + x64)
         run: ./package-release.sh mali build --no-package
