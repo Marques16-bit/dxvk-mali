@@ -1,0 +1,73 @@
+name: Build DXVK Mali (.wcp)
+
+# Só roda quando você tocar em "Run workflow" na aba Actions
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write   # necessário para publicar o .wcp em Releases
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      # Nome da versão que vai aparecer no Winlator (muda a cada build)
+      VER: mali-${{ github.run_number }}
+    steps:
+      - name: Baixar código (com submódulos)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Instalar dependências
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build glslang-tools mingw-w64 zstd
+          for arch in x86_64 i686; do
+            sudo update-alternatives --set ${arch}-w64-mingw32-gcc /usr/bin/${arch}-w64-mingw32-gcc-posix
+            sudo update-alternatives --set ${arch}-w64-mingw32-g++ /usr/bin/${arch}-w64-mingw32-g++-posix
+          done
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Compilar (x32 + x64)
+        run: ./package-release.sh mali build --no-package
+
+      - name: Montar pacote .wcp
+        run: |
+          set -e
+          mkdir -p wcp/system32 wcp/syswow64
+          cp build/dxvk-mali/x64/*.dll wcp/system32/
+          cp build/dxvk-mali/x32/*.dll wcp/syswow64/
+          python3 - <<'PY'
+          import json, os
+          files = []
+          for d, var in (("system32", "${system32}"), ("syswow64", "${syswow64}")):
+              for f in sorted(os.listdir("wcp/" + d)):
+                  files.append({"source": d + "/" + f, "target": var + "/" + f})
+          profile = {
+              "type": "DXVK",
+              "versionName": os.environ["VER"],
+              "versionCode": 1,
+              "description": "DXVK fork Mali (teste)",
+              "files": files,
+          }
+          with open("wcp/profile.json", "w") as fh:
+              json.dump(profile, fh, indent=2)
+          PY
+          tar -C wcp -cf - profile.json system32 syswow64 | zstd -19 -q -o "dxvk-${VER}.wcp"
+          ls -lh dxvk-*.wcp
+          cat wcp/profile.json
+
+      - name: Publicar em Releases (baixa o .wcp direto, sem zip)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: wcp-${{ github.run_number }}
+          name: DXVK Mali ${{ github.run_number }}
+          prerelease: true
+          files: dxvk-*.wcp
+
+      - name: Guardar também como artefato (plano B)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dxvk-${{ env.VER }}
+          path: dxvk-*.wcp
